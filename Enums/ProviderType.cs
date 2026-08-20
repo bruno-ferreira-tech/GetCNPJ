@@ -6,6 +6,11 @@ namespace GetCNPJ.Enums
     public enum ProviderType
     {
         /// <summary>
+        /// CNPJ.WS - https://publica.cnpj.ws (Provedor padrão, inclui Inscrição Estadual)
+        /// </summary>
+        CNPJWS,
+
+        /// <summary>
         /// ReceitaWS - https://receitaws.com.br
         /// </summary>
         ReceitaWS,

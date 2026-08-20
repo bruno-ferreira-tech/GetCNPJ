@@ -24,10 +24,15 @@ namespace GetCNPJ.Providers.CNPJA
         {
         }
 
-        protected override async Task<CnpjData> FetchDataAsync(string cnpj, CancellationToken cancellationToken)
+        protected override async Task<CnpjData?> FetchDataAsync(string cnpj, CancellationToken cancellationToken)
         {
             var url = $"{BaseUrl}{cnpj}";
             var response = await _httpClient.GetAsync(url, cancellationToken).ConfigureAwait(false);
+
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                return null;
+            }
 
             if (!response.IsSuccessStatusCode)
             {
@@ -35,11 +40,12 @@ namespace GetCNPJ.Providers.CNPJA
                 throw new HttpRequestException($"Erro na requisição: {response.StatusCode} - {errorContent}");
             }
 
-            var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-            var data = JsonSerializer.Deserialize<CNPJAResponse>(content, new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+#if NET8_0_OR_GREATER || NET9_0_OR_GREATER
+            var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+#else
+            var stream = await response.Content.ReadAsStreamAsync().ConfigureAwait(false);
+#endif
+            var data = await JsonSerializer.DeserializeAsync<CNPJAResponse>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
 
             if (data == null)
             {

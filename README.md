@@ -5,24 +5,28 @@
 
 <img width="374" height="373" alt="image" src="https://github.com/user-attachments/assets/a52c4ae9-fd76-48a6-af33-1dda1de6765d" />
 
+Biblioteca .NET de alta performance para consulta de CNPJ em APIs públicas brasileiras, com suporte a múltiplos provedores, fallback automático (*Chain of Responsibility*), rate limiting thread-safe, cache em memória e injeção de dependência.
 
-Biblioteca .NET para consulta de CNPJ em APIs públicas brasileiras, com suporte a múltiplos provedores e rate limiting integrado.
+---
 
 ## 📋 Características
 
-- ✅ **Multi-Target**: Suporta .NET Framework 4.8, 4.8.1, .NET 8, .NET 9 e .NET Standard 2.0
-- 🔄 **Chain of Responsibility**: Tenta automaticamente outros provedores em caso de falha
-- ⏱️ **Rate Limiting**: Controle automático de 3 requisições por minuto por provedor
-- 🎯 **Retorno Padronizado**: Dados consistentes independente do provedor utilizado
-- 📋 **Inscrição Estadual**: Suporte completo a inscrições estaduais (via CNPJ.WS)
-- 🔌 **Múltiplos Provedores**:
-  - **CNPJ.WS** (https://publica.cnpj.ws) - **Provedor padrão** ⭐ *Único que retorna inscrição estadual*
-  - ReceitaWS (https://receitaws.com.br)
-  - BrasilAPI (https://brasilapi.com.br)
-  - CNPJA (https://open.cnpja.com)
-- 🛡️ **Validação**: Validação automática de dígitos verificadores do CNPJ
-- ⚡ **Async/Await**: API totalmente assíncrona + métodos síncronos para compatibilidade
-- 🎨 **Clean Code**: Seguindo padrões SOLID e melhores práticas
+- ✅ **Multi-Target**: Suporta .NET Framework 4.8, 4.8.1, .NET 8, .NET 9 e .NET Standard 2.0.
+- 🔄 **Chain of Responsibility**: Fallback automático e transparente caso um provedor falhe ou atinja cota.
+- ⏱️ **Rate Limiting Thread-Safe**: Algoritmo *Sliding Window* seguro para ambientes concorrentes/multithread.
+- 💾 **Cache em Memória Integrado**: `ICnpjCache` com TTL configurável para respostas instantâneas e economia de cota de API.
+- 💉 **Injeção de Dependência (`Microsoft.Extensions.DependencyInjection`)**: Integração nativa com `services.AddGetCNPJ()` e `IHttpClientFactory`.
+- 📦 **Consulta em Lote (*Batch Query*)**: Suporte a consultas paralelas de listas de CNPJs com controle de concorrência.
+- 🔌 **Múltiplos Provedores Suportados**:
+  - **CNPJ.WS** (https://publica.cnpj.ws) - **Provedor padrão (Prioridade 1)** ⭐ *Retorna Inscrição Estadual*
+  - **ReceitaWS** (https://receitaws.com.br) - *Prioridade 2*
+  - **BrasilAPI** (https://brasilapi.com.br) - *Prioridade 3*
+  - **CNPJA** (https://open.cnpja.com) - *Prioridade 4*
+- 🎯 **Retorno Padronizado**: Dados normalizados em DTOs consistentes independente do provedor.
+- ⚡ **Zero-Allocation Validator**: `CnpjValidator` de alta performance sem alocação desnecessária de strings.
+- 🛡️ **Async/Await Nativo**: Totalmente assíncrono com suporte a `CancellationToken` e métodos síncronos legados.
+
+---
 
 ## 📦 Instalação
 
@@ -32,67 +36,98 @@ dotnet add package GetCNPJ
 
 Ou via NuGet Package Manager:
 
-```
+```powershell
 Install-Package GetCNPJ
 ```
 
-## 🚀 Uso Básico
+---
 
-### Consulta Simples
+## 🚀 Como Usar
+
+### 1. Injeção de Dependência (ASP.NET Core / Worker Services)
+
+A maneira recomendada em aplicações modernas é registrar o GetCNPJ no `IServiceCollection`:
+
+```csharp
+// Program.cs
+using GetCNPJ.Extensions;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Registra o GetCNPJ com opções customizadas
+builder.Services.AddGetCNPJ(options =>
+{
+    options.MaxRequestsPerMinute = 3;
+    options.EnableCache = true;
+    options.CacheTtl = TimeSpan.FromHours(12);
+    options.EnableCNPJWS = true;
+});
+
+var app = builder.Build();
+
+// Usando em um Endpoint ou Controller:
+app.MapGet("/empresa/{cnpj}", async (string cnpj, ICnpjService cnpjService) =>
+{
+    var result = await cnpjService.GetCnpjAsync(cnpj);
+    return result.Success ? Results.Ok(result.Data) : Results.NotFound(result.ErrorMessage);
+});
+
+app.Run();
+```
+
+---
+
+### 2. Uso Direto com `CnpjClient`
 
 ```csharp
 using GetCNPJ;
 using System;
 
-// Criar cliente
+// Instanciação simples (utiliza cache e rate limiter integrados)
 using var client = new CnpjClient();
 
-// Consultar CNPJ (aceita formatado ou apenas números)
+// Consulta (aceita formatado ou apenas números)
 var result = await client.GetAsync("03.312.791/0001-83");
 
-if (result.Success)
+if (result.Success && result.Data != null)
 {
     var data = result.Data;
-
     Console.WriteLine($"Razão Social: {data.RazaoSocial}");
     Console.WriteLine($"Nome Fantasia: {data.NomeFantasia}");
     Console.WriteLine($"CNPJ: {data.Cnpj}");
     Console.WriteLine($"Situação: {data.Situacao}");
-    Console.WriteLine($"Endereço: {data.Endereco.EnderecoCompleto}");
-    Console.WriteLine($"Email: {data.Email}");
-    Console.WriteLine($"Telefones: {string.Join(", ", data.Telefones)}");
+    Console.WriteLine($"Endereço: {data.Endereco?.EnderecoCompleto}");
+    Console.WriteLine($"Provedor Utilizado: {data.Provedor}");
 
-    // Inscrições Estaduais (disponível quando usa CNPJ.WS)
-    if (data.InscricoesEstaduais != null && data.InscricoesEstaduais.Any())
+    if (data.InscricoesEstaduais?.Count > 0)
     {
         Console.WriteLine("Inscrições Estaduais:");
         foreach (var ie in data.InscricoesEstaduais)
         {
-            Console.WriteLine($"  - {ie}"); // Formato: Inscrição (UF) - Status
+            Console.WriteLine($"  - {ie}");
         }
     }
-
-    Console.WriteLine($"Provedor usado: {data.Provedor}");
 }
 else
 {
     Console.WriteLine($"Erro: {result.ErrorMessage}");
-
-    // Exibir erros de cada provedor
-    foreach (var error in result.Errors)
-    {
-        Console.WriteLine($"- {error.ProviderName}: {error.ErrorMessage}");
-    }
 }
 ```
 
-### Consulta com Provedor Específico
+---
+
+### 3. Consulta com Provedor Específico (Enum Tipado)
+
+Você pode forçar a consulta em um provedor específico usando o enum `ProviderType`:
 
 ```csharp
+using GetCNPJ;
+using GetCNPJ.Enums;
+
 using var client = new CnpjClient();
 
-// Forçar uso de um provedor específico
-var result = await client.GetFromProviderAsync("03312791000183", "BrasilAPI");
+// Consulta diretamente no CNPJ.WS (único que traz Inscrição Estadual)
+var result = await client.GetFromProviderAsync("03312791000183", ProviderType.CNPJWS);
 
 if (result.Success)
 {
@@ -100,177 +135,122 @@ if (result.Success)
 }
 ```
 
-### Consulta Síncrona
+---
 
-Para aplicações que não usam async/await, você pode usar os métodos síncronos:
+### 4. Consulta em Lote (*Batch Query*)
 
 ```csharp
+using GetCNPJ;
+
 using var client = new CnpjClient();
 
-// Método síncrono
-var result = client.Get("03312791000183");
+string[] cnpjs = {
+    "03312791000183",
+    "00000000000191",
+    "18236120000158"
+};
 
-if (result.Success)
+// Executa em paralelo respeitando o grau máximo de concorrência e o rate limiter
+var results = await client.GetBatchAsync(cnpjs, maxDegreeOfParallelism: 2);
+
+foreach (var res in results)
 {
-    Console.WriteLine($"Razão Social: {result.Data.RazaoSocial}");
-    Console.WriteLine($"Nome Fantasia: {result.Data.NomeFantasia}");
+    if (res.Success)
+        Console.WriteLine($"✓ {res.Data.Cnpj} - {res.Data.RazaoSocial}");
+    else
+        Console.WriteLine($"✗ {res.ErrorMessage}");
 }
-
-// Provedor específico síncrono
-var result2 = client.GetFromProvider("03312791000183", "ReceitaWS");
 ```
 
-**Nota**: Os métodos síncronos bloqueiam a thread atual. Para aplicações modernas (ASP.NET Core, WPF, etc.), recomenda-se usar os métodos assíncronos.
+---
 
-### Configuração Customizada
+### 5. Validação e Formatação de Alta Performance (`CnpjValidator`)
+
+Você pode usar o utilitário estático `CnpjValidator` de forma avulsa:
+
+```csharp
+using GetCNPJ.Utils;
+
+bool valido = CnpjValidator.IsValid("03.312.791/0001-83"); // true
+string limpo = CnpjValidator.Normalize("03.312.791/0001-83"); // "03312791000183"
+string formatado = CnpjValidator.Format("03312791000183"); // "03.312.791/0001-83"
+```
+
+---
+
+### 6. Configuração Personalizada (`CnpjClientOptions`)
 
 ```csharp
 var options = new CnpjClientOptions
 {
-    MaxRequestsPerMinute = 5,           // Aumentar rate limit (use com cuidado!)
-    Timeout = TimeSpan.FromSeconds(60), // Timeout customizado
-    EnableReceitaWS = true,             // Habilitar/desabilitar provedores
+    MaxRequestsPerMinute = 5,
+    Timeout = TimeSpan.FromSeconds(20),
+    EnableCache = true,
+    CacheTtl = TimeSpan.FromHours(24),
+    UserAgent = "MinhaEmpresa-App/2.0",
+    EnableCNPJWS = true,
+    EnableReceitaWS = true,
     EnableBrasilAPI = true,
-    EnableCNPJA = false                 // Desabilitar CNPJA, por exemplo
+    EnableCNPJA = false // Desabilita provedor se desejar
 };
 
-using var client = new CnpjClient(null, options);
-var result = await client.GetAsync("03312791000183");
+using var client = new CnpjClient(options);
 ```
 
-### HttpClient Customizado
+---
 
-```csharp
-// Usar seu próprio HttpClient (recomendado em aplicações ASP.NET Core)
-var httpClient = new HttpClient
-{
-    Timeout = TimeSpan.FromSeconds(30)
-};
-
-using var client = new CnpjClient(httpClient);
-var result = await client.GetAsync("03312791000183");
-```
-
-## 📊 Modelo de Dados Retornado
+## 📊 Modelo de Dados Padronizado (`CnpjData`)
 
 ```csharp
 public class CnpjData
 {
-    public string Cnpj { get; set; }                    // CNPJ formatado
-    public string RazaoSocial { get; set; }             // Razão social
-    public string NomeFantasia { get; set; }            // Nome fantasia
-    public DateTime? DataAbertura { get; set; }         // Data de abertura
-    public string Situacao { get; set; }                // Situação cadastral
-    public DateTime? DataSituacao { get; set; }         // Data da situação
-    public string Tipo { get; set; }                    // MATRIZ/FILIAL
-    public string Porte { get; set; }                   // Porte da empresa
-    public string NaturezaJuridica { get; set; }        // Natureza jurídica
-    public decimal? CapitalSocial { get; set; }         // Capital social
-    public Endereco Endereco { get; set; }              // Endereço completo
+    public string Cnpj { get; set; }                    // CNPJ formatado (XX.XXX.XXX/XXXX-XX)
+    public string RazaoSocial { get; set; }             // Razão Social
+    public string NomeFantasia { get; set; }            // Nome Fantasia
+    public DateTime? DataAbertura { get; set; }         // Data de Abertura
+    public string Situacao { get; set; }                // Situação Cadastral
+    public DateTime? DataSituacao { get; set; }         // Data da Situação
+    public string Tipo { get; set; }                    // Matriz / Filial
+    public string Porte { get; set; }                   // Porte da Empresa
+    public string NaturezaJuridica { get; set; }        // Natureza Jurídica
+    public decimal? CapitalSocial { get; set; }         // Capital Social
+    public Endereco Endereco { get; set; }              // Endereço Completo
     public AtividadeEconomica AtividadePrincipal { get; set; }
     public List<AtividadeEconomica> AtividadesSecundarias { get; set; }
     public List<Socio> QuadroSocietario { get; set; }   // QSA
     public List<string> Telefones { get; set; }         // Telefones
     public string Email { get; set; }                   // Email
-    public List<InscricaoEstadual> InscricoesEstaduais { get; set; }  // Inscrições estaduais (CNPJ.WS)
-    public SimplesNacional Simples { get; set; }        // Info Simples Nacional
-    public DateTime? UltimaAtualizacao { get; set; }    // Data da atualização
-    public string Provedor { get; set; }                // Provedor usado
+    public List<InscricaoEstadual> InscricoesEstaduais { get; set; }  // Retornado via CNPJ.WS
+    public SimplesNacional Simples { get; set; }        // Optante Simples / MEI
+    public DateTime? UltimaAtualizacao { get; set; }    // Data da Atualização
+    public string Provedor { get; set; }                // Provedor que respondeu
 }
 ```
 
-## ⚙️ Padrões de Projeto Utilizados
+---
 
-- **Strategy Pattern**: Diferentes implementações de provedores de API
-- **Chain of Responsibility**: Tentativa automática em múltiplos provedores
-- **Factory Pattern**: Criação de instâncias dos provedores
-- **Repository Pattern**: Abstração da lógica de consulta
-- **DTO Pattern**: Padronização dos retornos
-- **Rate Limiter Pattern**: Controle de requisições usando Sliding Window
-
-## 🔒 Rate Limiting
-
-A biblioteca implementa rate limiting automático de 3 requisições por minuto por provedor, conforme solicitado. Cada provedor tem seu próprio contador independente.
-
-O algoritmo utilizado é o **Sliding Window**, que garante distribuição uniforme das requisições ao longo do tempo.
-
-## 🛠️ Arquitetura
+## 🛠️ Arquitetura do Projeto
 
 ```
 GetCNPJ/
-├── Models/              # DTOs padronizados
-├── Interfaces/          # Contratos da biblioteca
-├── Exceptions/          # Exceções customizadas
-├── Enums/              # Enumerações
-├── Providers/
-│   ├── Base/           # Classe base para providers
-│   ├── ReceitaWS/      # Provider ReceitaWS
-│   ├── BrasilAPI/      # Provider BrasilAPI
-│   └── CNPJA/          # Provider CNPJA
-├── Services/           # Serviço principal (Chain of Responsibility)
-├── RateLimiter/        # Implementação do Rate Limiter
-└── CnpjClient.cs       # Cliente principal
+├── Cache/               # Implementação de Cache em Memória (MemoryCnpjCache)
+├── Enums/               # Enumerações (ProviderType)
+├── Exceptions/          # Exceções especializadas
+├── Extensions/          # Extensões para DI (ServiceCollectionExtensions)
+├── Interfaces/          # Contratos (ICnpjService, ICnpjProvider, ICnpjCache, IRateLimiter)
+├── Models/              # DTOs padronizados e normalizados
+├── Providers/           # Implementações de provedores (CNPJWS, ReceitaWS, BrasilAPI, CNPJA)
+├── RateLimiter/         # SlidingWindowRateLimiter (thread-safe)
+├── Services/            # CnpjService (Chain of Responsibility)
+├── Utils/               # CnpjValidator (Zero-allocation validation)
+├── CnpjClient.cs        # Cliente principal
+├── samples/             # Projeto de console de exemplo
+└── tests/               # Suíte completa de testes unitários (xUnit)
 ```
-
-## 🧪 Tratamento de Erros
-
-A biblioteca trata erros de forma elegante:
-
-- **CNPJ Inválido**: Lança `InvalidCnpjException`
-- **Provedor Indisponível**: Tenta o próximo provedor automaticamente
-- **Rate Limit Excedido**: Aguarda automaticamente antes de fazer nova requisição
-- **Timeout**: Configurável via `CnpjClientOptions`
-- **Todos Provedores Falharam**: Retorna `CnpjResult` com `Success = false` e lista de erros
-
-## 📝 Requisitos
-
-- .NET Framework 4.8+ **ou**
-- .NET 8+ **ou**
-- .NET Standard 2.0+
-
-## 🤝 Contribuindo
-
-Contribuições são bem-vindas! Sinta-se à vontade para:
-
-1. Fazer fork do projeto
-2. Criar uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
-4. Push para a branch (`git push origin feature/AmazingFeature`)
-5. Abrir um Pull Request
-
-## 📄 Licença
-
-Este projeto está licenciado sob a licença MIT - veja o arquivo LICENSE para detalhes.
-
-## 🔗 APIs Utilizadas
-
-- [**CNPJ.WS**](https://publica.cnpj.ws) - **API padrão** ⭐ Único provedor que retorna inscrição estadual
-- [ReceitaWS](https://receitaws.com.br) - API gratuita de consulta de CNPJ
-- [BrasilAPI](https://brasilapi.com.br) - API pública brasileira
-- [CNPJA](https://open.cnpja.com) - API aberta de CNPJ
-
-**Nota**: Por padrão, a biblioteca usa o provedor CNPJ.WS como primeira opção (prioridade 1) pois é o único que fornece dados de inscrição estadual. Os demais provedores são utilizados como fallback em caso de falha.
-
-## ⚠️ Avisos Importantes
-
-- **Rate Limiting**: Respeite os limites de requisição das APIs públicas (3 req/min por padrão)
-- **Uso Responsável**: Esta biblioteca é para uso educacional e em aplicações que respeitem os termos de uso das APIs
-- **Dados Públicos**: Os dados retornados são públicos e provenientes da Receita Federal do Brasil
-- **Sem Garantias**: Os provedores podem ter indisponibilidade ou mudanças sem aviso prévio
-
-## 🎯 Roadmap
-
-- [ ] Adicionar cache de consultas
-- [ ] Suporte a mais provedores
-- [ ] Métricas e telemetria
-- [ ] Retry policy configurável
-- [ ] Suporte a consulta em lote
-- [ ] Logging integrado
-
-## 📞 Suporte
-
-Para reportar bugs ou solicitar features, abra uma issue no GitHub.
 
 ---
 
-Desenvolvido com ❤️ seguindo as melhores práticas de Clean Code e SOLID
+## 📄 Licença
+
+Este projeto está licenciado sob a licença **MIT** - consulte o arquivo [LICENSE](LICENSE) para mais detalhes.
+

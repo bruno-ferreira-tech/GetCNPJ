@@ -1,11 +1,12 @@
 using System;
 using System.Net.Http;
-using System.Text.RegularExpressions;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using GetCNPJ.Exceptions;
 using GetCNPJ.Interfaces;
 using GetCNPJ.Models;
+using GetCNPJ.Utils;
 
 namespace GetCNPJ.Providers.Base
 {
@@ -14,6 +15,11 @@ namespace GetCNPJ.Providers.Base
     /// </summary>
     public abstract class CnpjProviderBase : ICnpjProvider
     {
+        protected static readonly JsonSerializerOptions JsonOptions = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
         protected readonly HttpClient _httpClient;
         protected readonly IRateLimiter _rateLimiter;
 
@@ -35,7 +41,7 @@ namespace GetCNPJ.Providers.Base
         }
 
         /// <inheritdoc/>
-        public async Task<CnpjData> GetCnpjDataAsync(string cnpj, CancellationToken cancellationToken = default)
+        public async Task<CnpjData?> GetCnpjDataAsync(string cnpj, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -77,8 +83,10 @@ namespace GetCNPJ.Providers.Base
         {
             try
             {
-                var response = await _httpClient.GetAsync(BaseUrl).ConfigureAwait(false);
-                return response.IsSuccessStatusCode;
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                var request = new HttpRequestMessage(HttpMethod.Head, BaseUrl);
+                var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token).ConfigureAwait(false);
+                return (int)response.StatusCode < 500;
             }
             catch
             {
@@ -89,7 +97,7 @@ namespace GetCNPJ.Providers.Base
         /// <summary>
         /// Método abstrato para buscar dados do provedor específico
         /// </summary>
-        protected abstract Task<CnpjData> FetchDataAsync(string cnpj, CancellationToken cancellationToken);
+        protected abstract Task<CnpjData?> FetchDataAsync(string cnpj, CancellationToken cancellationToken);
 
         /// <summary>
         /// Valida e normaliza um CNPJ (remove formatação)
@@ -99,18 +107,15 @@ namespace GetCNPJ.Providers.Base
             if (string.IsNullOrWhiteSpace(cnpj))
                 throw new InvalidCnpjException("CNPJ não pode ser nulo ou vazio");
 
-            // Remove caracteres não numéricos
-            cnpj = Regex.Replace(cnpj, @"\D", "");
+            var normalized = CnpjValidator.Normalize(cnpj);
 
-            // Valida tamanho
-            if (cnpj.Length != 14)
+            if (normalized.Length != 14)
                 throw new InvalidCnpjException($"CNPJ deve ter 14 dígitos. Recebido: {cnpj}");
 
-            // Valida dígitos verificadores
-            if (!IsValidCnpj(cnpj))
+            if (!CnpjValidator.IsValid(normalized))
                 throw new InvalidCnpjException($"CNPJ inválido: {cnpj}");
 
-            return cnpj;
+            return normalized;
         }
 
         /// <summary>
@@ -118,44 +123,7 @@ namespace GetCNPJ.Providers.Base
         /// </summary>
         protected bool IsValidCnpj(string cnpj)
         {
-            if (cnpj.Length != 14)
-                return false;
-
-            // Verifica se todos os dígitos são iguais
-            var allSame = true;
-            for (int i = 1; i < 14 && allSame; i++)
-            {
-                if (cnpj[i] != cnpj[0])
-                    allSame = false;
-            }
-
-            if (allSame)
-                return false;
-
-            // Valida primeiro dígito verificador
-            int[] multiplier1 = { 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 };
-            int sum = 0;
-
-            for (int i = 0; i < 12; i++)
-                sum += int.Parse(cnpj[i].ToString()) * multiplier1[i];
-
-            int remainder = sum % 11;
-            remainder = remainder < 2 ? 0 : 11 - remainder;
-
-            if (int.Parse(cnpj[12].ToString()) != remainder)
-                return false;
-
-            // Valida segundo dígito verificador
-            int[] multiplier2 = { 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 };
-            sum = 0;
-
-            for (int i = 0; i < 13; i++)
-                sum += int.Parse(cnpj[i].ToString()) * multiplier2[i];
-
-            remainder = sum % 11;
-            remainder = remainder < 2 ? 0 : 11 - remainder;
-
-            return int.Parse(cnpj[13].ToString()) == remainder;
+            return CnpjValidator.IsValid(cnpj);
         }
 
         /// <summary>
@@ -163,10 +131,7 @@ namespace GetCNPJ.Providers.Base
         /// </summary>
         protected string FormatCnpj(string cnpj)
         {
-            if (string.IsNullOrWhiteSpace(cnpj) || cnpj.Length != 14)
-                return cnpj;
-
-            return $"{cnpj.Substring(0, 2)}.{cnpj.Substring(2, 3)}.{cnpj.Substring(5, 3)}/{cnpj.Substring(8, 4)}-{cnpj.Substring(12, 2)}";
+            return CnpjValidator.Format(cnpj);
         }
     }
 }

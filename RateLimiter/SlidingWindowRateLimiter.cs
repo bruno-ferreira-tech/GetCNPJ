@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using GetCNPJ.Interfaces;
@@ -9,15 +8,14 @@ using GetCNPJ.Interfaces;
 namespace GetCNPJ.RateLimiter
 {
     /// <summary>
-    /// Implementação de Rate Limiter usando Sliding Window
-    /// Limita o número de requisições por intervalo de tempo
+    /// Implementação de Rate Limiter usando Sliding Window com thread-safety completo.
+    /// Limita o número de requisições por intervalo de tempo para cada provedor.
     /// </summary>
     public class SlidingWindowRateLimiter : IRateLimiter
     {
         private readonly int _maxRequests;
         private readonly TimeSpan _timeWindow;
-        private readonly ConcurrentDictionary<string, Queue<DateTime>> _requestTimestamps;
-        private readonly ConcurrentDictionary<string, SemaphoreSlim> _semaphores;
+        private readonly ConcurrentDictionary<string, ProviderRateLimitState> _providerStates;
 
         /// <summary>
         /// Construtor
@@ -26,79 +24,110 @@ namespace GetCNPJ.RateLimiter
         /// <param name="timeWindow">Intervalo de tempo (padrão: 1 minuto)</param>
         public SlidingWindowRateLimiter(int maxRequests = 3, TimeSpan? timeWindow = null)
         {
+            if (maxRequests <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maxRequests), "O número máximo de requisições deve ser maior que zero.");
+
             _maxRequests = maxRequests;
             _timeWindow = timeWindow ?? TimeSpan.FromMinutes(1);
-            _requestTimestamps = new ConcurrentDictionary<string, Queue<DateTime>>();
-            _semaphores = new ConcurrentDictionary<string, SemaphoreSlim>();
+            _providerStates = new ConcurrentDictionary<string, ProviderRateLimitState>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private ProviderRateLimitState GetState(string providerName)
+        {
+            return _providerStates.GetOrAdd(providerName, _ => new ProviderRateLimitState());
         }
 
         /// <inheritdoc/>
         public async Task WaitIfNeededAsync(string providerName, CancellationToken cancellationToken = default)
         {
-            var semaphore = _semaphores.GetOrAdd(providerName, _ => new SemaphoreSlim(1, 1));
+            var state = GetState(providerName);
 
-            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await state.Semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var timestamps = _requestTimestamps.GetOrAdd(providerName, _ => new Queue<DateTime>());
-
-                // Remove timestamps antigos fora da janela de tempo
-                CleanOldTimestamps(timestamps);
-
-                // Se atingiu o limite, aguarda até que uma requisição antiga expire
-                while (timestamps.Count >= _maxRequests)
+                while (true)
                 {
-                    var oldestRequest = timestamps.Peek();
-                    var waitTime = oldestRequest.Add(_timeWindow) - DateTime.UtcNow;
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    TimeSpan waitTime = TimeSpan.Zero;
+
+                    lock (state.LockObj)
+                    {
+                        CleanOldTimestamps(state.Timestamps);
+
+                        if (state.Timestamps.Count < _maxRequests)
+                        {
+                            // Slot disponível
+                            return;
+                        }
+
+                        var oldestRequest = state.Timestamps.Peek();
+                        waitTime = oldestRequest.Add(_timeWindow) - DateTime.UtcNow;
+                    }
 
                     if (waitTime > TimeSpan.Zero)
                     {
                         await Task.Delay(waitTime, cancellationToken).ConfigureAwait(false);
                     }
-
-                    CleanOldTimestamps(timestamps);
                 }
             }
             finally
             {
-                semaphore.Release();
+                state.Semaphore.Release();
             }
         }
 
         /// <inheritdoc/>
         public void RecordRequest(string providerName)
         {
-            var timestamps = _requestTimestamps.GetOrAdd(providerName, _ => new Queue<DateTime>());
-            timestamps.Enqueue(DateTime.UtcNow);
+            var state = GetState(providerName);
+            lock (state.LockObj)
+            {
+                CleanOldTimestamps(state.Timestamps);
+                state.Timestamps.Enqueue(DateTime.UtcNow);
+            }
         }
 
         /// <inheritdoc/>
         public void Reset(string providerName)
         {
-            _requestTimestamps.TryRemove(providerName, out _);
+            if (_providerStates.TryGetValue(providerName, out var state))
+            {
+                lock (state.LockObj)
+                {
+                    state.Timestamps.Clear();
+                }
+            }
         }
 
         /// <inheritdoc/>
         public int GetAvailableRequests(string providerName)
         {
-            if (!_requestTimestamps.TryGetValue(providerName, out var timestamps))
+            if (!_providerStates.TryGetValue(providerName, out var state))
                 return _maxRequests;
 
-            CleanOldTimestamps(timestamps);
-            return Math.Max(0, _maxRequests - timestamps.Count);
+            lock (state.LockObj)
+            {
+                CleanOldTimestamps(state.Timestamps);
+                return Math.Max(0, _maxRequests - state.Timestamps.Count);
+            }
         }
 
-        /// <summary>
-        /// Remove timestamps fora da janela de tempo
-        /// </summary>
         private void CleanOldTimestamps(Queue<DateTime> timestamps)
         {
             var cutoffTime = DateTime.UtcNow.Subtract(_timeWindow);
 
-            while (timestamps.Count > 0 && timestamps.Peek() < cutoffTime)
+            while (timestamps.Count > 0 && timestamps.Peek() <= cutoffTime)
             {
                 timestamps.Dequeue();
             }
+        }
+
+        private sealed class ProviderRateLimitState
+        {
+            public SemaphoreSlim Semaphore { get; } = new SemaphoreSlim(1, 1);
+            public object LockObj { get; } = new object();
+            public Queue<DateTime> Timestamps { get; } = new Queue<DateTime>();
         }
     }
 }
