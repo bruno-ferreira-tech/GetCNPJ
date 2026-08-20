@@ -269,7 +269,7 @@ namespace GetCNPJ
         /// <summary>
         /// User-Agent enviado nas requisições HTTP
         /// </summary>
-        public string UserAgent { get; set; } = "GetCNPJ-DotNet/1.1.0 (https://github.com/azumamagus/GetCNPJ)";
+        public string UserAgent { get; set; } = "GetCNPJ-DotNet/1.1.0 (https://github.com/bruno-ferreira-tech/GetCNPJ)";
 
         /// <summary>
         /// Habilita o cache em memória de consultas de CNPJ (padrão: true)

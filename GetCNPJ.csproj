@@ -15,7 +15,7 @@
         <Company>FeTx</Company>
         <Description>Biblioteca de alta performance para consulta de CNPJ em APIs públicas brasileiras (CNPJ.WS, ReceitaWS, BrasilAPI, CNPJA). Suporta .NET Framework 4.8+, .NET 8, .NET 9 e .NET Standard 2.0 com rate limiting inteligente, fallback automático, injeção de dependência e cache em memória.</Description>
         <PackageTags>CNPJ;Brasil;ReceitaWS;BrasilAPI;CNPJA;CNPJWS;API;Consulta;Receita;Empresas;Cache;RateLimit</PackageTags>
-        <RepositoryUrl>https://github.com/azumamagus/GetCNPJ</RepositoryUrl>
+        <RepositoryUrl>https://github.com/bruno-ferreira-tech/GetCNPJ</RepositoryUrl>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <PackageReadmeFile>README.md</PackageReadmeFile>
         <PackageIcon>logo.png</PackageIcon>
