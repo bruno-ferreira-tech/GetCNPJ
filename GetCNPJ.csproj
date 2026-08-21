@@ -25,7 +25,14 @@
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <IncludeSymbols>true</IncludeSymbols>
         <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <DefaultItemExcludes>$(DefaultItemExcludes);GetCNPJ.Api\**;samples\**;tests\**</DefaultItemExcludes>
     </PropertyGroup>
+
+    <ItemGroup>
+        <Compile Remove="GetCNPJ.Api\**;samples\**;tests\**" />
+        <EmbeddedResource Remove="GetCNPJ.Api\**;samples\**;tests\**" />
+        <None Remove="GetCNPJ.Api\**;samples\**;tests\**" />
+    </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="System.Text.Json" Version="8.0.5" />

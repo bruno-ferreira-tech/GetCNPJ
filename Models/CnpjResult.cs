@@ -17,12 +17,12 @@ namespace GetCNPJ.Models
         /// <summary>
         /// Dados do CNPJ (null se não houver sucesso)
         /// </summary>
-        public CnpjData Data { get; set; }
+        public CnpjData? Data { get; set; }
 
         /// <summary>
         /// Mensagem de erro (null se houver sucesso)
         /// </summary>
-        public string ErrorMessage { get; set; }
+        public string? ErrorMessage { get; set; }
 
         /// <summary>
         /// Lista de erros ocorridos durante as tentativas
@@ -57,7 +57,7 @@ namespace GetCNPJ.Models
         /// <summary>
         /// Cria um resultado de erro
         /// </summary>
-        public static CnpjResult CreateError(string errorMessage, List<ProviderError> errors = null)
+        public static CnpjResult CreateError(string errorMessage, List<ProviderError>? errors = null)
         {
             return new CnpjResult
             {
